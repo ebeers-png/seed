@@ -4,19 +4,20 @@
 :copyright (c) 2014 - 2020, The Regents of the University of California, through Lawrence Berkeley National Laboratory (subject to receipt of any required approvals from the U.S. Department of Energy) and contributors. All rights reserved.  # NOQA
 :author
 """
-from drf_yasg.utils import swagger_auto_schema
+from django.db.models import Count
 from django.http import JsonResponse
-from rest_framework import viewsets, serializers
+from drf_yasg.utils import swagger_auto_schema
+from rest_framework import serializers, status
 from rest_framework.decorators import action
-from rest_framework.status import HTTP_409_CONFLICT
 
 from seed.analysis_pipelines.pipeline import AnalysisPipeline, AnalysisPipelineException
-from seed.decorators import ajax_request_class, require_organization_id_class
+from seed.decorators import ajax_request_class
 from seed.lib.superperms.orgs.decorators import has_perm_class
-from seed.models import Analysis
+from seed.models import Analysis, Cycle, PropertyView, PropertyState
 from seed.serializers.analyses import AnalysisSerializer
-from seed.utils.api import api_endpoint_class
+from seed.utils.api import api_endpoint_class, OrgValidateMixin
 from seed.utils.api_schema import AutoSchemaHelper
+from seed.utils.viewsets import SEEDOrgCreateUpdateModelViewSet
 
 
 class CreateAnalysisSerializer(AnalysisSerializer):
@@ -36,7 +37,7 @@ class CreateAnalysisSerializer(AnalysisSerializer):
         )
 
 
-class AnalysisViewSet(viewsets.ViewSet):
+class AnalysisViewSet(OrgValidateMixin, SEEDOrgCreateUpdateModelViewSet):
     serializer_class = AnalysisSerializer
     model = Analysis
 
@@ -46,7 +47,6 @@ class AnalysisViewSet(viewsets.ViewSet):
         ],
         request_body=CreateAnalysisSerializer,
     )
-    @require_organization_id_class
     @api_endpoint_class
     @ajax_request_class
     @has_perm_class('requires_member')
@@ -75,7 +75,7 @@ class AnalysisViewSet(viewsets.ViewSet):
             return JsonResponse({
                 'status': 'error',
                 'message': str(e)
-            }, status=HTTP_409_CONFLICT)
+            }, status=status.HTTP_409_CONFLICT)
 
     @swagger_auto_schema(
         manual_parameters=[
@@ -83,7 +83,6 @@ class AnalysisViewSet(viewsets.ViewSet):
             AutoSchemaHelper.query_integer_field('property_id', False, 'Property ID')
         ]
     )
-    @require_organization_id_class
     @api_endpoint_class
     @ajax_request_class
     @has_perm_class('requires_member')
@@ -114,7 +113,6 @@ class AnalysisViewSet(viewsets.ViewSet):
         })
 
     @swagger_auto_schema(manual_parameters=[AutoSchemaHelper.query_org_id_field(True)])
-    @require_organization_id_class
     @api_endpoint_class
     @ajax_request_class
     @has_perm_class('requires_member')
@@ -126,7 +124,7 @@ class AnalysisViewSet(viewsets.ViewSet):
             return JsonResponse({
                 'status': 'error',
                 'message': "Requested analysis doesn't exist in this organization."
-            }, status=HTTP_409_CONFLICT)
+            }, status=status.HTTP_409_CONFLICT)
         serialized_analysis = AnalysisSerializer(analysis).data
         property_view_info = analysis.get_property_view_info()
         serialized_analysis.update(property_view_info)
@@ -137,7 +135,6 @@ class AnalysisViewSet(viewsets.ViewSet):
         })
 
     @swagger_auto_schema(manual_parameters=[AutoSchemaHelper.query_org_id_field()])
-    @require_organization_id_class
     @api_endpoint_class
     @ajax_request_class
     @has_perm_class('requires_member')
@@ -157,15 +154,14 @@ class AnalysisViewSet(viewsets.ViewSet):
             return JsonResponse({
                 'status': 'error',
                 'message': 'Requested analysis doesn\'t exist in this organization.'
-            }, status=HTTP_409_CONFLICT)
+            }, status=status.HTTP_409_CONFLICT)
         except AnalysisPipelineException as e:
             return JsonResponse({
                 'status': 'error',
                 'message': str(e)
-            }, status=HTTP_409_CONFLICT)
+            }, status=status.HTTP_409_CONFLICT)
 
     @swagger_auto_schema(manual_parameters=[AutoSchemaHelper.query_org_id_field()])
-    @require_organization_id_class
     @api_endpoint_class
     @ajax_request_class
     @has_perm_class('requires_member')
@@ -183,10 +179,9 @@ class AnalysisViewSet(viewsets.ViewSet):
             return JsonResponse({
                 'status': 'error',
                 'message': 'Requested analysis doesn\'t exist in this organization.'
-            }, status=HTTP_409_CONFLICT)
+            }, status=status.HTTP_409_CONFLICT)
 
     @swagger_auto_schema(manual_parameters=[AutoSchemaHelper.query_org_id_field()])
-    @require_organization_id_class
     @api_endpoint_class
     @ajax_request_class
     @has_perm_class('requires_member')
@@ -203,4 +198,36 @@ class AnalysisViewSet(viewsets.ViewSet):
             return JsonResponse({
                 'status': 'error',
                 'message': 'Requested analysis doesn\'t exist in this organization.'
-            }, status=HTTP_409_CONFLICT)
+            }, status=status.HTTP_409_CONFLICT)
+
+    @api_endpoint_class
+    @ajax_request_class
+    @has_perm_class('requires_member')
+    @action(detail=False, methods=['get'])
+    def stats(self, request):
+        org_id = self.get_organization(request)
+        cycle_id = request.query_params.get('cycle_id')
+
+        if not cycle_id:
+            return JsonResponse({
+                'success': False,
+                'message': 'cycle_id parameter is missing'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            Cycle.objects.get(id=cycle_id, organization_id=org_id)
+        except Cycle.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'message': 'Cycle does not exist'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        views = PropertyView.objects.filter(state__organization_id=org_id, cycle_id=cycle_id)
+        states = PropertyState.objects.filter(id__in=views.values_list('state_id', flat=True))
+        property_types = states.values('property_type').annotate(count=Count('property_type')).order_by('-count')
+
+        return JsonResponse({
+            'status': 'success',
+            'total_records': views.count(),
+            'property_types': {item['property_type']: item['count'] for item in property_types}
+        })
