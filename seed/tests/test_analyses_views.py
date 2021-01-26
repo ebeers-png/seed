@@ -171,10 +171,6 @@ class TestAnalysesView(TestCase):
         self.assertEqual(analysis_b['number_of_analysis_property_views'], 1)
         self.assertEqual(len(analysis_b['cycles']), 1)
 
-    def test_list_organization_missing(self):
-        response = self.client.get('/api/v3/analyses/')
-        self.assertEqual(response.status_code, 400)
-
     def test_retrieve_with_organization(self):
         response = self.client.get("".join([
             '/api/v3/analyses/',
@@ -188,10 +184,6 @@ class TestAnalysesView(TestCase):
         self.assertEqual(result['analysis']['id'], self.analysis_a.id)
         self.assertEqual(result['analysis']['number_of_analysis_property_views'], 2)
         self.assertEqual(len(result['analysis']['cycles']), 2)
-
-    def test_retrieve_organization_missing(self):
-        response = self.client.get('/api/v3/analyses/' + str(self.analysis_a.pk) + '/')
-        self.assertEqual(response.status_code, 400)
 
     def test_list_views(self):
         response = self.client.get("".join([
